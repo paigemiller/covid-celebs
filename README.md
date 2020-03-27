@@ -2,7 +2,7 @@
 
 Are celebrities being tested faster than the rest of us? 
 
-<img src="https://upload.wikimedia.org/wikipedia/commons/9/9c/Kevin_Durant_dunks_USA_basketball_2015_140801-F-AT963-843.JPG" width="48">
+<img src="https://upload.wikimedia.org/wikipedia/commons/9/9c/Kevin_Durant_dunks_USA_basketball_2015_140801-F-AT963-843.JPG" width="96">
 
 
 Contributors: 
