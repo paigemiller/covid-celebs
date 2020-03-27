@@ -1,0 +1,262 @@
+---
+title: "Celebrity COVID Cases"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+urlcolor: blue
+header-includes:
+  - \usepackage{amsmath}
+output:
+  html_document:
+  pdf_document: default
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, message=FALSE, echo=FALSE}
+
+library(tidyverse) # package that helps "wrangle" data
+library(ggplot2); theme_set(theme_bw())
+library(magrittr)  # package that lets you use "piping" i.e., %>%
+library(knitr)     # package that helps make html and pdfs from r code
+library(table1)    # package to make nice tables
+library(lattice)
+library(GGally)
+
+opts_chunk$set(echo = FALSE, message=FALSE, warning=FALSE)
+options(scipen = 999)
+```
+
+# Summary of data
+
+```{r readData}
+# read in your data. 
+# don't need last columns for now. 
+data <- read.csv('data/celebrity.csv', na.strings = c(""))[, 1:19] 
+
+# fix some columns for easier analysis
+data %<>%
+  # change these variables to lowercase
+  mutate_at(vars(Test_results, Symptoms_binary), tolower) %>%
+  mutate(Category_career=str_trim(Category_career)) %>%
+  # change these date variables to character first, weird quirk of R
+  mutate_at(vars(contains("Date")), as.character) %>%
+  # then change them to "Date" variable
+  mutate_at(vars(contains("Date")), as.Date, format="%Y-%m-%d")
+
+```
+
+```{r summarizeData}
+# Making new variables that are categorical variables  
+data %<>%
+  mutate(Age_cat=cut(data$Age, c(15, 25, 35, 55, 85))) %>%
+  mutate(Net_worth_cat=cut(data$Net_worth, c(0, 1e6, 1e7, 
+                                            1e8, 1e10))) %>%
+  mutate(Instagram_followers_cat=cut(data$Instagram_followers, 
+                                    c(0, 1.5e5, 5e5, 
+                                            5e6, 5e7)))
+
+# Giving our data nice labels for the table below
+label(data$Age_cat) <- "Age"
+label(data$Category_career) <- "Career"
+label(data$Test_country) <- "Country tested"
+label(data$Net_worth_cat) <- "Net Worth"
+label(data$Instagram_followers_cat) <- "Instagram followers"
+
+# A nice summary table of the celebrites
+table1(~Category_career + Age_cat|Sex, data = data)
+```
+
+Our current data contain more than three times as many male celebrities as female celebrities. Part of the difference is due to a large number of male athletes being tested and a large difference in the number of male politicians tested. 
+
+The ages of celebrities tested varied from 19 to 81. Most celebrities were 35-55 years old.
+
+```{r}
+# Summary tables of the celebrity predictors
+data %>%
+  filter(!is.na(Net_worth)) %>%
+  group_by(Category_career) %>%
+  summarise(Mean = mean(Net_worth/1e6, na.rm = TRUE), 
+           SD = sd(Net_worth/1e6, na.rm = TRUE), 
+           n = n()) %>% 
+  kable(digits = 1, caption="Net worth of celebrites tested for COVID (in millions). ")
+
+data %>%
+  filter(!is.na(Instagram_followers)) %>%
+  group_by(Category_career) %>%
+  summarise(Mean = mean(Instagram_followers/1e3, na.rm = TRUE), 
+           SD = sd(Instagram_followers/1e3, na.rm = TRUE), 
+           n = n()) %>% kable(digits = 1, caption="Instagram followers of celebrites tested for COVID (in thousands). ")
+```
+
+Celebrities in the entertainment industry had the highest net worth on average, followed by politicians. Entertainment celebrities also had the most instagram followers followed by celebrities, on average. 
+
+```{r continuousHistograms, fig.cap="Celebrity net worth and followers by career type. "}
+
+data %>%
+  ggplot(aes(x=Category_career, y=Net_worth/1e6)) + 
+  geom_boxplot() + scale_y_log10()  -> p1
+
+data %>%
+  ggplot(aes(x=Category_career, y=Instagram_followers/1e3)) + 
+  geom_boxplot() + scale_y_log10()  -> p2
+
+gridExtra::grid.arrange(p1, p2, ncol=1)
+
+```
+
+
+```{r, fig.cap="Celebrity coronavirus cases by reporting date in our dataset. "}
+# Try making an epidemic curve for the celebrities using date of symptoms or date of reporting. 
+
+data %>%
+  group_by(Date_reported) %>%
+  tally(name="Cases") %>%     # check out the data up to here
+  # figure out how to get date of reporting on the x axis
+  ggplot(aes(x=Date_reported, y=Cases)) + 
+  geom_line() + 
+  geom_point() + 
+  labs(x="Date of reporting", y="Celebrity cases")
+
+```
+
+Reports of celebrity coronavirus cases peaked on March 19th and has trailed off. 
+
+# Univariate analyses of delay distributions
+
+Here, we want to see the overall delay distributions of all celebrities. 
+
+```{r delayDistributions, fig.cap="Delay distributions of celebrity cases.  "}
+data %<>%
+  mutate(Exposure_to_reporting=Date_reported-Date_exposure) %>%
+  mutate(Symptoms_to_testing=Date_of_Test-Date_symptoms) %>%
+  mutate(Testing_to_reporting=Date_reported-Date_of_Test) %>%
+  mutate(Symptoms_to_reporting=Date_reported-Date_symptoms) 
+
+intervalData <- data %>%
+  select(contains("to_"))  %>%
+  mutate_each(as.numeric) %>%
+  gather("Interval", "Days")
+
+# this is an easy to use function from the lattice package
+densityplot(~Days|Interval, data = intervalData)
+
+data%>%
+  select(contains("to_"))  %>%
+  mutate_each(as.numeric) %>%
+  summary()
+```
+
+Celebrities are being tested 2.9 days after symptom onset, on average with a median of 3 days. They are getting their results back 2.4 days after testing, with a median of 1 day. 
+
+# Multivariate analyses
+
+Response variables: 
+
+- exposure to symptoms
+- exposure to testing
+- exposure to reporting
+- symptoms to testing
+- symptoms to reporting
+- testing to reporting
+
+Predictor variables: 
+
+- age
+- sex
+- symptoms binary
+- career category
+- net worth
+- insta followers
+- country
+
+```{r symptomToTestingContinuous, fig.cap="Symptom to testing delay by age, net worth, and instagram followers.  "}
+
+data %>%
+  select(Age, Net_worth, 
+         Instagram_followers, 
+         Symptoms_to_testing) %>%
+  mutate(Net_worth=Net_worth/1e6,
+         Instagram_followers=Instagram_followers/1e3) %>% 
+  mutate(Symptoms_to_testing=as.numeric(Symptoms_to_testing)) %>%
+  mutate_at(vars(Net_worth, Instagram_followers), log) %>%
+  ggpairs() + 
+  theme(axis.text.x = element_text(angle = 90))
+```
+
+Older age is POSITIVELY correlated with symptom to testing delay. Not what we expected. Net worth and instagram followership is not associated with symptom to testing delay. 
+
+```{r testingToReportingContinuous, fig.cap="Testing to reporting delay by age, net worth, and instagram followers.  "}
+data %>%
+  select(Age, Net_worth, 
+         Instagram_followers, 
+         Testing_to_reporting) %>%
+  mutate(Net_worth=Net_worth/1e6,
+         Instagram_followers=Instagram_followers/1e3) %>% 
+  mutate(Testing_to_reporting=as.numeric(Testing_to_reporting)) %>%
+  mutate_at(vars(Net_worth, Instagram_followers), log) %>%
+  ggpairs() + 
+  theme(axis.text.x = element_text(angle = 90))
+```
+
+There is a slight negative correlation between age and testing to reporting delay. Net worth and instagram followers did not have a relationship with testing to reporting delay. 
+
+```{r symptomsToTestingDiscrete, fig.cap="Symptom to testing delay by sex, career category, and test country. "}
+
+data %>%
+  select(Sex, Symptoms_to_testing) %>%
+  filter(!is.na(Sex)) %>%
+  mutate(Symptoms_to_testing=as.numeric(Symptoms_to_testing)) %>%
+  ggplot(aes(x=Sex, y=Symptoms_to_testing)) + 
+  geom_boxplot() -> p1
+
+data %>%
+  select(Category_career, Symptoms_to_testing) %>%
+  filter(Category_career%in%c("Athlete", "Politician", 
+                              "Entertainment")) %>%
+  mutate(Symptoms_to_testing=as.numeric(Symptoms_to_testing)) %>%
+  ggplot(aes(x=Category_career, y=Symptoms_to_testing)) + 
+  geom_boxplot() -> p2
+
+data %>%
+  select(Test_country, Symptoms_to_reporting) %>%
+  filter(!is.na(Test_country)) %>%
+  mutate(Test_country=ifelse(Test_country=="USA", "USA", "Other")) %>%
+  mutate(Symptoms_to_reporting=as.numeric(Symptoms_to_reporting)) %>%
+  ggplot(aes(x=Test_country, y=Symptoms_to_reporting)) + 
+  geom_boxplot() -> p3
+
+gridExtra::grid.arrange(p1, p2, p3) 
+```
+
+The most apparent difference in symptom to testing delay is by celebrity career type. Athletes were tested very quickly following a scare with a few infected players lowering their average. 
+
+```{r testingToReportingDiscrete, fig.cap="Testing to reporting delay by sex, career category, and test country. "}
+
+data %>%
+  select(Sex, Testing_to_reporting) %>%
+  filter(!is.na(Sex)) %>%
+  mutate(Testing_to_reporting=as.numeric(Testing_to_reporting)) %>%
+  ggplot(aes(x=Sex, y=Testing_to_reporting)) + 
+  geom_boxplot() -> p1
+
+data %>%
+  select(Category_career, Testing_to_reporting) %>%
+  filter(Category_career%in%c("Athlete", "Politician", 
+                              "Entertainment")) %>%
+  mutate(Testing_to_reporting=as.numeric(Testing_to_reporting)) %>%
+  ggplot(aes(x=Category_career, y=Testing_to_reporting)) + 
+  geom_boxplot() -> p2
+
+data %>%
+  select(Test_country, Testing_to_reporting) %>%
+  filter(!is.na(Test_country)) %>%
+  mutate(Test_country=ifelse(Test_country=="USA", "USA", "Other")) %>%
+  mutate(Testing_to_reporting=as.numeric(Testing_to_reporting)) %>%
+  ggplot(aes(x=Test_country, y=Testing_to_reporting)) + 
+  geom_boxplot() -> p3
+
+gridExtra::grid.arrange(p1, p2, p3) 
+```
+
+The most interesting difference here is that even celebrities in the US are (sometimes) having to wait 5-8 days for test results. But on average, they are getting their test result back in 1 day, like the rest of the world. 
+
+
